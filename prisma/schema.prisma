@@ -1,0 +1,541 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  RECEIVING_OPERATOR
+  SHIFT_SUPERVISOR
+  AUDITOR
+}
+
+enum DockStatus {
+  IDLE
+  OCCUPIED
+  RESERVED
+  MAINTENANCE
+}
+
+enum ReceivingStatus {
+  SCHEDULED
+  ARRIVAL_DETECTED
+  MATCH_PENDING
+  ARRIVED
+  RECEIVING
+  REVIEW_REQUIRED
+  RECEIVED
+  CLOSED
+  CANCELLED
+}
+
+enum EventClassification {
+  human
+  vehicle
+  package_delivery
+  other_motion
+  motion
+}
+
+enum CorrelationStatus {
+  PROPOSED
+  CONFIRMED
+  REJECTED
+  OVERRIDDEN
+}
+
+enum ExceptionType {
+  UNSCHEDULED_VEHICLE
+  ARRIVAL_OVERDUE
+  RECEIVING_OVERDUE
+  DOCK_CONGESTION
+  CAMERA_OFFLINE
+  DISCREPANCY_FOUND
+}
+
+enum ExceptionSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ExceptionStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  DISMISSED
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model Organization {
+  id             String   @id @default(uuid())
+  name           String
+  code           String   @unique
+  slug           String   @unique
+  retentionDays  Int      @default(365)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  users                 User[]
+  facilities            Facility[]
+  docks                 Dock[]
+  ringCameras           RingCameraConnection[]
+  cameraDockMappings    CameraDockMapping[]
+  carriers              Carrier[]
+  expectedDeliveries    ExpectedDelivery[]
+  ringEvents            RingEvent[]
+  eventCorrelations     EventCorrelation[]
+  receivingSessions     ReceivingSession[]
+  receivingConfirmations ReceivingConfirmation[]
+  operationalExceptions OperationalException[]
+  operatorAssignments   OperatorAssignment[]
+  evidenceReferences    EvidenceReference[]
+  auditLogs             AuditLog[]
+  automationRules       AutomationRule[]
+  notificationRecords   NotificationRecord[]
+  durableJobs           DurableJob[]
+
+  @@map("organizations")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  orgId        String
+  email        String
+  name         String
+  passwordHash String
+  role         Role     @default(RECEIVING_OPERATOR)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  organization          Organization           @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  correlationsConfirmed EventCorrelation[]
+  sessionsStarted       ReceivingSession[]
+  confirmations         ReceivingConfirmation[]
+  exceptionsResolved    OperationalException[]
+  operatorAssignments   OperatorAssignment[]
+  auditLogs             AuditLog[]
+
+  @@unique([orgId, email])
+  @@index([orgId, role])
+  @@map("users")
+}
+
+model Facility {
+  id        String   @id @default(uuid())
+  orgId     String
+  name      String
+  code      String
+  timezone  String   @default("UTC")
+  address   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization          Organization           @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  docks                 Dock[]
+  ringCameras           RingCameraConnection[]
+  expectedDeliveries    ExpectedDelivery[]
+  ringEvents            RingEvent[]
+  operationalExceptions OperationalException[]
+
+  @@unique([orgId, code])
+  @@map("facilities")
+}
+
+model Dock {
+  id         String     @id @default(uuid())
+  orgId      String
+  facilityId String
+  dockNumber String
+  name       String
+  status     DockStatus @default(IDLE)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  organization          Organization           @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  facility              Facility               @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  cameraMappings        CameraDockMapping[]
+  expectedDeliveries    ExpectedDelivery[]
+  receivingSessions     ReceivingSession[]
+  operationalExceptions OperationalException[]
+  operatorAssignments   OperatorAssignment[]
+
+  @@unique([facilityId, dockNumber])
+  @@index([orgId, status])
+  @@map("docks")
+}
+
+model RingCameraConnection {
+  id              String    @id @default(uuid())
+  orgId           String
+  facilityId      String
+  deviceId        String    // e.g. ava1.ring.device.dock1
+  deviceName      String
+  deviceType      String    @default("camera")
+  batteryStatus   String?
+  isOnline        Boolean   @default(true)
+  firmwareVersion String?
+  lastSeenAt      DateTime?
+  tokenEncrypted  String?
+  capabilities    Json?
+  privacyZones    Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  organization    Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  facility        Facility            @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  cameraMappings  CameraDockMapping[]
+  ringEvents      RingEvent[]
+
+  @@unique([orgId, deviceId])
+  @@index([facilityId, isOnline])
+  @@map("ring_camera_connections")
+}
+
+model CameraDockMapping {
+  id         String   @id @default(uuid())
+  orgId      String
+  cameraId   String
+  dockId     String
+  isPrimary  Boolean  @default(true)
+  viewAngle  String   @default("FRONT_BAY")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  organization Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  camera       RingCameraConnection @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  dock         Dock                 @relation(fields: [dockId], references: [id], onDelete: Cascade)
+
+  @@unique([cameraId, dockId])
+  @@index([dockId])
+  @@map("camera_dock_mappings")
+}
+
+model Carrier {
+  id           String   @id @default(uuid())
+  orgId        String
+  name         String
+  scacCode     String?
+  contactPhone String?
+  contactEmail String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  organization       Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  expectedDeliveries ExpectedDelivery[]
+
+  @@unique([orgId, name])
+  @@map("carriers")
+}
+
+model ExpectedDelivery {
+  id                         String          @id @default(uuid())
+  orgId                      String
+  facilityId                 String
+  dockId                     String?
+  carrierId                  String?
+  trackingNumber             String?
+  purchaseOrderNumber        String
+  bolNumber                  String?
+  expectedArrivalWindowStart DateTime
+  expectedArrivalWindowEnd   DateTime
+  status                     ReceivingStatus @default(SCHEDULED)
+  actualArrivalTime          DateTime?
+  completedAt                DateTime?
+  palletCount                Int             @default(1)
+  itemDescription            String?
+  notes                      String?
+  createdAt                  DateTime        @default(now())
+  updatedAt                  DateTime        @updatedAt
+
+  organization           Organization            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  facility               Facility                @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  dock                   Dock?                   @relation(fields: [dockId], references: [id], onDelete: SetNull)
+  carrier                Carrier?                @relation(fields: [carrierId], references: [id], onDelete: SetNull)
+  shipmentReferences     ShipmentReference[]
+  eventCorrelations      EventCorrelation[]
+  receivingSessions      ReceivingSession[]
+  receivingConfirmations ReceivingConfirmation[]
+  operationalExceptions  OperationalException[]
+  evidenceReferences     EvidenceReference[]
+
+  @@index([orgId, status])
+  @@index([facilityId, expectedArrivalWindowStart, expectedArrivalWindowEnd])
+  @@index([purchaseOrderNumber])
+  @@map("expected_deliveries")
+}
+
+model ShipmentReference {
+  id                 String           @id @default(uuid())
+  expectedDeliveryId String
+  referenceType      String           // PO, BOL, INVOICE, RMA, ASN
+  referenceValue     String
+  createdAt          DateTime         @default(now())
+
+  expectedDelivery   ExpectedDelivery @relation(fields: [expectedDeliveryId], references: [id], onDelete: Cascade)
+
+  @@unique([expectedDeliveryId, referenceType, referenceValue])
+  @@index([referenceValue])
+  @@map("shipment_references")
+}
+
+model RingEvent {
+  id              String               @id @default(uuid())
+  orgId           String
+  facilityId      String
+  cameraId        String
+  requestId       String               @unique // deduplication from meta.request_id
+  eventType       String               @default("motion")
+  subType         EventClassification? // human, vehicle, package_delivery, other_motion, motion
+  startedAt       DateTime
+  endedAt         DateTime?
+  snapshotUrl     String?
+  rawPayload      Json
+  isProcessed     Boolean              @default(false)
+  processingError String?
+  createdAt       DateTime             @default(now())
+
+  organization       Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  facility           Facility             @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  camera             RingCameraConnection @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  eventCorrelations  EventCorrelation[]
+  evidenceReferences EvidenceReference[]
+
+  @@index([orgId, startedAt])
+  @@index([cameraId, startedAt])
+  @@index([subType])
+  @@map("ring_events")
+}
+
+model EventCorrelation {
+  id                 String            @id @default(uuid())
+  orgId              String
+  ringEventId        String
+  expectedDeliveryId String
+  confidenceScore    Float             // 0.0 to 1.0
+  matchReasoning     Json              // structured evidence
+  status             CorrelationStatus @default(PROPOSED)
+  correlatedAt       DateTime          @default(now())
+  confirmedByUserId  String?
+
+  organization     Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  ringEvent        RingEvent        @relation(fields: [ringEventId], references: [id], onDelete: Cascade)
+  expectedDelivery ExpectedDelivery @relation(fields: [expectedDeliveryId], references: [id], onDelete: Cascade)
+  confirmedByUser  User?            @relation(fields: [confirmedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([ringEventId, expectedDeliveryId])
+  @@index([expectedDeliveryId, status])
+  @@map("event_correlations")
+}
+
+model ReceivingSession {
+  id                   String           @id @default(uuid())
+  orgId                String
+  expectedDeliveryId   String
+  dockId               String
+  status               String           @default("IN_PROGRESS") // IN_PROGRESS, PAUSED, COMPLETED, ABORTED
+  startedAt            DateTime         @default(now())
+  endedAt              DateTime?
+  startedByUserId      String
+  palletCountReceived  Int              @default(0)
+  discrepanciesNote    String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  organization         Organization          @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  expectedDelivery     ExpectedDelivery      @relation(fields: [expectedDeliveryId], references: [id], onDelete: Cascade)
+  dock                 Dock                  @relation(fields: [dockId], references: [id], onDelete: Cascade)
+  startedByUser        User                  @relation(fields: [startedByUserId], references: [id])
+  confirmations        ReceivingConfirmation[]
+  evidenceReferences   EvidenceReference[]
+
+  @@index([expectedDeliveryId])
+  @@index([dockId, status])
+  @@map("receiving_sessions")
+}
+
+model ReceivingConfirmation {
+  id                  String           @id @default(uuid())
+  orgId               String
+  receivingSessionId  String
+  expectedDeliveryId  String
+  confirmedByUserId   String
+  signatureData       String?          // e.g. digital signature or base64
+  discrepancyCount    Int              @default(0)
+  sealIntact          Boolean          @default(true)
+  damagesReported     Boolean          @default(false)
+  damageNotes         String?
+  confirmedAt         DateTime         @default(now())
+  proofOfReceiptHash  String           // cryptographic hash of receipt data for auditability
+  receiptNumber       String           @unique
+  createdAt           DateTime         @default(now())
+
+  organization        Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  receivingSession    ReceivingSession @relation(fields: [receivingSessionId], references: [id], onDelete: Cascade)
+  expectedDelivery    ExpectedDelivery @relation(fields: [expectedDeliveryId], references: [id], onDelete: Cascade)
+  confirmedByUser     User             @relation(fields: [confirmedByUserId], references: [id])
+
+  @@index([expectedDeliveryId])
+  @@index([proofOfReceiptHash])
+  @@map("receiving_confirmations")
+}
+
+model OperationalException {
+  id                 String            @id @default(uuid())
+  orgId              String
+  facilityId         String
+  dockId             String?
+  expectedDeliveryId String?
+  exceptionType      ExceptionType
+  severity           ExceptionSeverity @default(MEDIUM)
+  status             ExceptionStatus   @default(OPEN)
+  title              String
+  details            String
+  detectedAt         DateTime          @default(now())
+  resolvedAt         DateTime?
+  resolvedByUserId   String?
+  resolutionNotes    String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  organization     Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  facility         Facility          @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  dock             Dock?             @relation(fields: [dockId], references: [id], onDelete: SetNull)
+  expectedDelivery ExpectedDelivery? @relation(fields: [expectedDeliveryId], references: [id], onDelete: SetNull)
+  resolvedByUser   User?             @relation(fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, status, severity])
+  @@index([facilityId, exceptionType])
+  @@map("operational_exceptions")
+}
+
+model OperatorAssignment {
+  id         String    @id @default(uuid())
+  orgId      String
+  dockId     String
+  userId     String
+  shiftStart DateTime
+  shiftEnd   DateTime?
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  dock         Dock         @relation(fields: [dockId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([dockId, isActive])
+  @@map("operator_assignments")
+}
+
+model EvidenceReference {
+  id                 String            @id @default(uuid())
+  orgId              String
+  expectedDeliveryId String?
+  receivingSessionId String?
+  ringEventId        String?
+  evidenceType       String            // RING_SNAPSHOT, S3_PROOF, SEAL_PHOTO, BOL_SCAN
+  storagePath        String
+  s3Url              String?
+  sha256Checksum     String
+  capturedAt         DateTime          @default(now())
+  metadata           Json?
+  createdAt          DateTime          @default(now())
+
+  organization     Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  expectedDelivery ExpectedDelivery? @relation(fields: [expectedDeliveryId], references: [id], onDelete: SetNull)
+  receivingSession ReceivingSession? @relation(fields: [receivingSessionId], references: [id], onDelete: SetNull)
+  ringEvent        RingEvent?        @relation(fields: [ringEventId], references: [id], onDelete: SetNull)
+
+  @@index([expectedDeliveryId])
+  @@index([ringEventId])
+  @@map("evidence_references")
+}
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  orgId         String
+  userId        String?
+  action        String
+  entityType    String
+  entityId      String
+  previousState Json?
+  newState      Json?
+  ipAddress     String?
+  userAgent     String?
+  timestamp     DateTime @default(now())
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, entityType, entityId])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
+
+model AutomationRule {
+  id           String   @id @default(uuid())
+  orgId        String
+  name         String
+  triggerEvent String   // e.g. "RING_VEHICLE_MOTION", "DELIVERY_OVERDUE"
+  conditions   Json     // e.g. { "confidence_gt": 0.85, "dock_matched": true }
+  action       String   // e.g. "AUTO_TRANSITION_ARRIVED", "NOTIFY_SUPERVISOR"
+  isEnabled    Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, triggerEvent, isEnabled])
+  @@map("automation_rules")
+}
+
+model NotificationRecord {
+  id        String   @id @default(uuid())
+  orgId     String
+  recipient String
+  channel   String   // SSE, WEBHOOK, EMAIL, SQS
+  subject   String
+  message   String
+  status    String   @default("SENT")
+  sentAt    DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, sentAt])
+  @@map("notification_records")
+}
+
+model DurableJob {
+  id           String    @id @default(uuid())
+  orgId        String
+  jobType      String    // CORRELATE_EVENT, PROCESS_WEBHOOK, DETECT_EXCEPTIONS, SYNC_RING_DEVICES
+  payload      Json
+  status       JobStatus @default(PENDING)
+  retryCount   Int       @default(0)
+  maxRetries   Int       @default(3)
+  lastError    String?
+  scheduledFor DateTime  @default(now())
+  lockedAt     DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([status, scheduledFor])
+  @@index([orgId, jobType])
+  @@map("durable_jobs")
+}
