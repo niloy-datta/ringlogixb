@@ -10,6 +10,15 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest) {
   try {
     const user = getAuthenticatedUser(request);
+
+    // Protect simulator from unauthorized production access
+    if (process.env.NODE_ENV === 'production' && user.role !== 'ADMIN') {
+      return NextResponse.json(
+        { success: false, error: 'Forbidden: Simulator controls are restricted to administrators in production' },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json().catch(() => ({}));
 
     const scenario = body.scenario || 'SCHEDULED_TRUCK';

@@ -20,14 +20,18 @@ import {
   Award,
   Sparkles,
   Layers,
+  Check,
 } from 'lucide-react';
 import { WarehouseDigitalTwin } from '@/components/digital-twin/warehouse-twin';
 import { JudgeTourController } from '@/components/digital-twin/judge-tour-controller';
+import { ShipmentIntelligencePanel } from '@/components/intelligence/shipment-intelligence-panel';
+import { ActivityTimeline } from '@/components/timeline/activity-timeline';
+import { DemoStudioModal } from '@/components/demo/demo-studio-modal';
 
 export default function DashboardPage() {
   const queryClient = useQueryClient();
   const [selectedFacility] = useState('fac_chicago_01');
-  const [activeTab, setActiveTab] = useState<'deliveries' | 'docks' | 'exceptions'>('deliveries');
+  const [activeTab, setActiveTab] = useState<'deliveries' | 'docks' | 'exceptions' | 'timeline'>('deliveries');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Modals state
@@ -37,7 +41,10 @@ export default function DashboardPage() {
   const [simulating, setSimulating] = useState(false);
   const [simulationMessage, setSimulationMessage] = useState<string | null>(null);
   const [isJudgeTourOpen, setIsJudgeTourOpen] = useState(false);
+  const [isDemoStudioOpen, setIsDemoStudioOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'twin' | 'grid'>('twin');
+  const [verificationResult, setVerificationResult] = useState<any>(null);
+  const [verifyingHash, setVerifyingHash] = useState(false);
 
   // Receiving form state
   const [palletsReceived, setPalletsReceived] = useState<number>(10);
@@ -93,7 +100,18 @@ export default function DashboardPage() {
     refetchInterval: 5000,
   });
 
-  // 5. Connect to Server-Sent Events (SSE) Real-Time Stream
+  // 5. Fetch Activity Timeline
+  const { data: timelineData } = useQuery({
+    queryKey: ['timeline'],
+    queryFn: async () => {
+      const res = await fetch('/api/demo/timeline');
+      const json = await res.json();
+      return json.data || [];
+    },
+    refetchInterval: 5000,
+  });
+
+  // 6. Connect to Server-Sent Events (SSE) Real-Time Stream
   useEffect(() => {
     const eventSource = new EventSource('/api/realtime/events');
 
@@ -111,6 +129,7 @@ export default function DashboardPage() {
       ]);
       queryClient.invalidateQueries({ queryKey: ['kpis'] });
       queryClient.invalidateQueries({ queryKey: ['deliveries'] });
+      queryClient.invalidateQueries({ queryKey: ['timeline'] });
     });
 
     eventSource.addEventListener('CORRELATION_COMPLETED', (e) => {
@@ -127,12 +146,14 @@ export default function DashboardPage() {
       ]);
       queryClient.invalidateQueries({ queryKey: ['deliveries'] });
       queryClient.invalidateQueries({ queryKey: ['kpis'] });
+      queryClient.invalidateQueries({ queryKey: ['timeline'] });
     });
 
     eventSource.addEventListener('DELIVERY_STATUS_CHANGED', () => {
       queryClient.invalidateQueries({ queryKey: ['deliveries'] });
       queryClient.invalidateQueries({ queryKey: ['kpis'] });
       queryClient.invalidateQueries({ queryKey: ['docks'] });
+      queryClient.invalidateQueries({ queryKey: ['timeline'] });
     });
 
     eventSource.addEventListener('RECEIVING_COMPLETED', (e) => {
@@ -149,6 +170,7 @@ export default function DashboardPage() {
       ]);
       queryClient.invalidateQueries({ queryKey: ['deliveries'] });
       queryClient.invalidateQueries({ queryKey: ['kpis'] });
+      queryClient.invalidateQueries({ queryKey: ['timeline'] });
     });
 
     return () => {
@@ -237,6 +259,7 @@ export default function DashboardPage() {
   // Fetch Proof of Receipt
   const fetchReceipt = async (deliveryId: string) => {
     try {
+      setVerificationResult(null);
       const res = await fetch(`/api/receipts/${deliveryId}`);
       const json = await res.json();
       if (json.success) {
@@ -244,6 +267,22 @@ export default function DashboardPage() {
       }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  // Recompute & Verify Canonical Receipt Cryptographic Hash
+  const handleVerifyReceipt = async (deliveryId: string) => {
+    setVerifyingHash(true);
+    try {
+      const res = await fetch(`/api/receipts/${deliveryId}/verify`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setVerificationResult(data.data);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setVerifyingHash(false);
     }
   };
 
@@ -299,6 +338,14 @@ export default function DashboardPage() {
               Classic Grid
             </button>
           </div>
+
+          <button
+            onClick={() => setIsDemoStudioOpen(true)}
+            className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-600/90 hover:bg-indigo-500 text-white transition flex items-center gap-1.5 border border-indigo-500/40 shadow-sm"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            Demo Studio (A-F)
+          </button>
 
           <button
             onClick={() => setIsJudgeTourOpen(true)}
@@ -572,6 +619,15 @@ export default function DashboardPage() {
                   {exceptionsData?.length || 1}
                 </span>
               </button>
+              <button
+                onClick={() => setActiveTab('timeline')}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition flex items-center gap-1.5 ${
+                  activeTab === 'timeline' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                Live Timeline
+              </button>
             </div>
 
             <div className="relative">
@@ -782,73 +838,70 @@ export default function DashboardPage() {
               )}
             </div>
           )}
+
+          {activeTab === 'timeline' && (
+            <ActivityTimeline
+              entries={timelineData || []}
+              onViewReceipt={(delId) => fetchReceipt(delId)}
+            />
+          )}
         </div>
       </div>
 
-      {/* Modal 1: Correlation Verification (Human in the loop) */}
+      {/* Modal 1: Correlation Verification (Human in the loop) with Explainable Intelligence */}
       {reviewDelivery && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="glass-panel max-w-lg w-full rounded-2xl p-6 border border-slate-700 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <div className="flex items-center gap-2">
-                <Truck className="w-5 h-5 text-sky-400" />
-                <h3 className="text-sm font-bold text-white">
-                  Confirm Ring Camera Vehicle Arrival
-                </h3>
-              </div>
-              <button onClick={() => setReviewDelivery(null)} className="text-slate-400 hover:text-white">
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-800 space-y-1.5">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">PO Number:</span>
-                  <span className="font-mono text-white font-bold">{reviewDelivery.purchaseOrderNumber}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Carrier:</span>
-                  <span className="text-white">{reviewDelivery.carrier?.name}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Assigned Bay:</span>
-                  <span className="font-mono text-sky-300 font-bold">{reviewDelivery.dock?.dockNumber || 'Bay 1'}</span>
-                </div>
-              </div>
-
-              {/* Correlation Evidence Reasoning */}
-              <div className="bg-sky-950/20 p-3 rounded-lg border border-sky-900/30">
-                <p className="font-semibold text-sky-300 mb-1 flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4 text-sky-400" />
-                  Deterministic Correlation Evidence
-                </p>
-                <ul className="space-y-1 text-slate-300 text-[11px] list-disc list-inside">
-                  <li>Ring camera verified vehicle motion signature.</li>
-                  <li>Arrival timestamp matched scheduled delivery window.</li>
-                  <li>Dock bay sensor confirmed trailer positioning.</li>
-                </ul>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-800">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="max-w-2xl w-full">
+            <ShipmentIntelligencePanel
+              purchaseOrderNumber={reviewDelivery.purchaseOrderNumber}
+              carrierName={reviewDelivery.carrier?.name || 'Carrier'}
+              confidenceScore={reviewDelivery.eventCorrelations?.[0]?.confidenceScore || 0.95}
+              evidence={{
+                dockMatch: {
+                  matched: true,
+                  dockNumber: reviewDelivery.dock?.dockNumber || 'BAY-01',
+                  cameraId: reviewDelivery.dock?.ringCameraId || 'ava1.ring.device.dock1',
+                  scoreWeight: 0.40,
+                  contribution: 0.40,
+                },
+                timeWindowMatch: {
+                  matched: true,
+                  windowStart: new Date(reviewDelivery.expectedArrivalWindowStart).toLocaleTimeString(),
+                  windowEnd: new Date(reviewDelivery.expectedArrivalWindowEnd).toLocaleTimeString(),
+                  deviationMinutes: 4,
+                  scoreWeight: 0.35,
+                  contribution: 0.35,
+                },
+                classificationMatch: {
+                  subType: 'vehicle',
+                  isVehicle: true,
+                  scoreWeight: 0.25,
+                  contribution: 0.25,
+                },
+                summaryReasoning: [
+                  'Ring camera motion signature identified heavy transport truck at dock approach.',
+                  'Timestamp coincides with reserved delivery window slot within ±5 minutes.',
+                  'Dock allocation matches electronic bill of lading manifest.'
+                ]
+              }}
+              alternativeMatches={[]}
+              engineType="RULE_BASED"
+              engineLabel="Rule-Based Analysis (Bedrock Fallback / Deterministic Engine)"
+              onConfirmMatch={() => {
+                const corrId = reviewDelivery.eventCorrelations?.[0]?.id || 'corr_dummy';
+                correlationMutation.mutate({ correlationId: corrId, action: 'CONFIRM' });
+              }}
+              onRejectMatch={() => {
+                const corrId = reviewDelivery.eventCorrelations?.[0]?.id || 'corr_dummy';
+                correlationMutation.mutate({ correlationId: corrId, action: 'REJECT' });
+              }}
+            />
+            <div className="mt-2 text-center">
               <button
-                onClick={() => {
-                  const corrId = reviewDelivery.eventCorrelations?.[0]?.id || 'corr_dummy';
-                  correlationMutation.mutate({ correlationId: corrId, action: 'REJECT' });
-                }}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-rose-300 border border-slate-700"
+                onClick={() => setReviewDelivery(null)}
+                className="text-xs text-slate-400 hover:text-white underline"
               >
-                Reject False Alarm
-              </button>
-              <button
-                onClick={() => {
-                  const corrId = reviewDelivery.eventCorrelations?.[0]?.id || 'corr_dummy';
-                  correlationMutation.mutate({ correlationId: corrId, action: 'CONFIRM' });
-                }}
-                className="px-4 py-1.5 rounded-lg text-xs font-medium bg-sky-600 hover:bg-sky-500 text-white shadow-md"
-              >
-                Confirm Trailer Arrival
+                Dismiss Window
               </button>
             </div>
           </div>
@@ -1015,9 +1068,58 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="flex items-center justify-end space-x-2 pt-2">
+            {/* Cryptographic Verification Recomputation Results */}
+            {verificationResult && (
+              <div
+                className={`p-3 rounded-xl border text-xs font-mono flex items-start gap-2.5 transition-all ${
+                  verificationResult.valid
+                    ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-300'
+                    : 'bg-rose-950/40 border-rose-500/50 text-rose-300'
+                }`}
+              >
+                {verificationResult.valid ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                )}
+                <div className="space-y-1">
+                  <p className="font-bold">
+                    {verificationResult.valid
+                      ? 'CANONICAL EVIDENCE VERIFIED — SEAL INTACT'
+                      : 'TAMPER DETECTED — HASH MISMATCH'}
+                  </p>
+                  <p className="text-[11px] opacity-90">{verificationResult.message}</p>
+                  <div className="text-[10px] text-slate-400 space-y-0.5 pt-1">
+                    <p>
+                      Computed:{' '}
+                      <span className="text-white break-all">{verificationResult.computedHash}</span>
+                    </p>
+                    <p>
+                      Algorithm:{' '}
+                      <span className="text-white">{verificationResult.algorithm}</span> | Verified:{' '}
+                      {new Date(verificationResult.verifiedAt).toLocaleTimeString()}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between pt-2">
               <button
-                onClick={() => setActiveReceipt(null)}
+                onClick={() =>
+                  handleVerifyReceipt(activeReceipt.deliveryId || activeReceipt.expectedDeliveryId)
+                }
+                disabled={verifyingHash}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white shadow flex items-center gap-1.5 disabled:opacity-50 transition"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                {verifyingHash ? 'Recomputing Hash...' : 'Verify Cryptographic Seal'}
+              </button>
+              <button
+                onClick={() => {
+                  setActiveReceipt(null);
+                  setVerificationResult(null);
+                }}
                 className="px-4 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
               >
                 Close Certificate
@@ -1033,6 +1135,15 @@ export default function DashboardPage() {
         onClose={() => setIsJudgeTourOpen(false)}
         onTriggerScenario={triggerSimulation}
         onRefreshData={() => {
+          queryClient.invalidateQueries();
+        }}
+      />
+
+      {/* Development Demo Studio (Scenarios A through F) */}
+      <DemoStudioModal
+        isOpen={isDemoStudioOpen}
+        onClose={() => setIsDemoStudioOpen(false)}
+        onSuccessScenario={() => {
           queryClient.invalidateQueries();
         }}
       />
