@@ -1,31 +1,32 @@
-# DockFlow AI — Intelligent Event-Driven Warehouse Receiving OS
+# DockFlow AI — Intelligent Event-Driven Warehouse Receiving OS & Digital Twin
 
 <p align="center">
-  <img src="https://img.shields.io/badge/DockFlow_AI-Arrival--to--Receipt_Automation-0284c7?style=for-the-badge&logo=ring&logoColor=white" alt="DockFlow AI" />
+  <img src="https://img.shields.io/badge/DockFlow_AI-Mission_Control_Digital_Twin-0284c7?style=for-the-badge&logo=ring&logoColor=white" alt="DockFlow AI" />
 </p>
 
 <p align="center">
-  <a href="#-architecture--workflow"><img src="https://img.shields.io/badge/Architecture-Event--Driven-blue?style=flat-square" alt="Event-Driven" /></a>
-  <a href="#-automated-testing"><img src="https://img.shields.io/badge/Tests-36%20Passed%20(100%25)-brightgreen?style=flat-square&logo=vitest" alt="Vitest 36 Passed" /></a>
+  <a href="#-warehouse-digital-twin"><img src="https://img.shields.io/badge/Warehouse-2.5D_Digital_Twin-0ea5e9?style=flat-square" alt="Digital Twin" /></a>
+  <a href="#-automated-testing"><img src="https://img.shields.io/badge/Tests-47%20Passed%20(100%25)-brightgreen?style=flat-square&logo=vitest" alt="Vitest 47 Passed" /></a>
   <a href="#-production-build"><img src="https://img.shields.io/badge/Build-Passing-brightgreen?style=flat-square&logo=next.js" alt="Next.js Build Passing" /></a>
-  <a href="https://developer.amazon.com/docs/ring/api-documentation.html"><img src="https://img.shields.io/badge/Ring_Partner_API-v1_Compliant-orange?style=flat-square" alt="Ring Partner API" /></a>
+  <a href="https://developer.amazon.com/docs/ring/api-documentation.html"><img src="https://img.shields.io/badge/Ring_API-Official_JSON%3AAPI_Compliant-orange?style=flat-square" alt="Ring Partner API" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-Strict_Mode-blue?style=flat-square&logo=typescript" alt="TypeScript" /></a>
-  <a href="https://www.prisma.io/"><img src="https://img.shields.io/badge/Prisma-5.22.0-2D3748?style=flat-square&logo=prisma" alt="Prisma" /></a>
+  <a href="https://www.prisma.io/"><img src="https://img.shields.io/badge/Prisma-5.21.1-2D3748?style=flat-square&logo=prisma" alt="Prisma" /></a>
   <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-16-336791?style=flat-square&logo=postgresql" alt="PostgreSQL" /></a>
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=flat-square" alt="License" />
 </p>
 
-> **Arrival-to-Receipt Automation with Amazon Ring Cameras**  
-> *Transforming physical security cameras into an automated logistics verification & tamper-evident proof-of-receipt operating system.*
+> **Arrival-to-Receipt Automation with Amazon Ring Cameras & Warehouse Digital Twin**  
+> *Transforming physical security cameras into an automated logistics verification, explainable AI matching, and tamper-evident proof-of-receipt operating system.*
 
 ---
 
 ## 📑 Table of Contents
 - [🌟 Product Vision & Differentiator](#-product-vision--differentiator)
+- [🏢 Warehouse Digital Twin & Demo Studio](#-warehouse-digital-twin--demo-studio)
 - [🏗️ System Architecture](#️-system-architecture)
 - [🔄 Automated Arrival-to-Receipt Workflow](#-automated-arrival-to-receipt-workflow)
-- [⚡ Ring Partner API Integration](#-ring-partner-api-integration)
-- [🧪 Automated Testing Suite (36/36 Passed)](#-automated-testing-suite-3636-passed)
+- [⚡ Ring Partner API Integration & JSON:API Normalization](#-ring-partner-api-integration)
+- [🧪 Automated Testing Suite (47/47 Passed)](#-automated-testing-suite-4747-passed)
 - [🚀 Quickstart & Local Setup](#-quickstart--local-setup)
 - [📂 Repository Structure](#-repository-structure)
 - [📚 Companion Specifications](#-companion-specifications)
@@ -37,14 +38,14 @@
 Conventional camera applications only notify users of motion or stream passive video. **DockFlow AI** is an event-driven warehouse receiving operating system that converts Amazon Ring camera events into actionable logistics workflows — from trailer arrival detection through dock assignment, deterministic multi-factor correlation, human verification, and tamper-evident cryptographic proof-of-receipt.
 
 ### Core Capabilities
-- **Official Ring Partner API Client**: Device discovery, status polling, and telemetry streaming via `https://api.amazonvision.com/v1/`.
-- **Sub-5-Second Webhook Ingestion**: Fast HTTPS webhook ingestion with constant-time HMAC-SHA256 signature verification and deduplication on `meta.request_id`.
-- **Deterministic Correlation Engine**: Multi-factor matching evaluating assigned dock bays, scheduled appointment windows, and Ring Smart Alerts vehicle classification. **Never identifies a truck or driver solely from generic motion.**
+- **Interactive Warehouse Digital Twin**: Premium 2.5D isometric warehouse command center featuring 5 loading dock bays (`BAY-01` to `BAY-05`), Ring radar coverage cones, animated trucks, and live telemetry drawers.
+- **90-Second Judge Tour & Demo Studio**: One-click automated demonstration tour and comprehensive Demo Studio covering Scenarios A through F with real database state changes.
+- **Official Ring JSON:API Client & Normalizer**: Full compliance with Amazon Ring JSON:API payloads (`data.type: "events"`), raw-body HMAC-SHA256 constant-time verification, 300s replay window, and AES-256-GCM token encryption.
+- **Deterministic Correlation Engine**: Multi-factor matching evaluating assigned dock bays (40%), scheduled appointment windows (35%), and Ring Smart Alerts vehicle classification (25%). **Never identifies a truck or driver solely from generic motion.**
+- **Explainable Shipment Intelligence**: Detailed breakdown of match confidence, alternative candidates, uncertainty factors, and explicit attribution (`AMAZON_BEDROCK` vs `RULE_BASED`).
+- **Cryptographic Proof of Receipt Verification**: Recomputes canonical 256-bit SHA-256 tamper-evident receipt hashes from database fields to detect any post-receipt alterations.
 - **Workflow State Machine**: Strict atomic transitions (`SCHEDULED` ➔ `ARRIVAL_DETECTED` ➔ `MATCH_PENDING` ➔ `ARRIVED` ➔ `RECEIVING` ➔ `RECEIVED` ➔ `CLOSED`).
-- **Cryptographic Proof of Receipt**: Generates canonical 256-bit SHA-256 tamper-evident receipts binding carrier identity, Ring camera event timestamps, physical pallet counts, and seal integrity.
 - **Real-Time SSE Operational Stream**: Live telemetry streaming via Server-Sent Events with bounded replay and heartbeat pings.
-- **Automated Exception Detection**: Proactive monitoring for unscheduled vehicles, overdue arrivals, delayed receiving, dock congestion, and offline cameras.
-- **Amazon Bedrock & S3 Architecture**: Modular AI analysis interface for cargo discrepancy scoring and S3-compatible evidence storage.
 
 ---
 

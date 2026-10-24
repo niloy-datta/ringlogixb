@@ -177,6 +177,20 @@ export class ReceivingService {
       throw new Error(`Receiving session not found: ${params.sessionId}`);
     }
 
+    // Idempotency check: if session is already completed, return existing confirmation
+    if (session.status === 'COMPLETED') {
+      const existingConf = await prisma.receivingConfirmation.findFirst({
+        where: { receivingSessionId: session.id },
+      });
+      if (existingConf) {
+        logger.info('Receiving session already completed; returning existing confirmation idempotently', {
+          sessionId: session.id,
+          receiptNumber: existingConf.receiptNumber,
+        });
+        return existingConf;
+      }
+    }
+
     const delivery = session.expectedDelivery;
 
     // AI/Bedrock Discrepancy Evaluation
@@ -207,6 +221,7 @@ export class ReceivingService {
 
     // Build Canonical Receipt Payload for SHA-256 Cryptographic Hash
     const receiptNumber = `REC-${Date.now().toString(36).toUpperCase()}-${delivery.purchaseOrderNumber.slice(-4)}`;
+    const confirmedAtDate = new Date();
     const receiptPayload = {
       receiptNumber,
       deliveryId: delivery.id,
@@ -219,7 +234,7 @@ export class ReceivingService {
       damagesReported: params.damagesReported,
       discrepancyCount: params.discrepancyCount || 0,
       verifiedByUserId: params.actorUserId,
-      confirmedAt: new Date().toISOString(),
+      confirmedAt: confirmedAtDate.toISOString(),
     };
 
     const tamperProofHash = generateTamperProofHash(receiptPayload);
@@ -231,7 +246,7 @@ export class ReceivingService {
         where: { id: session.id },
         data: {
           status: 'COMPLETED',
-          endedAt: new Date(),
+          endedAt: confirmedAtDate,
           palletCountReceived: params.palletCountReceived,
           discrepanciesNote: params.damageNotes,
         },
@@ -250,6 +265,7 @@ export class ReceivingService {
           sealIntact: params.sealIntact,
           damagesReported: params.damagesReported,
           damageNotes: params.damageNotes,
+          confirmedAt: confirmedAtDate,
           proofOfReceiptHash: tamperProofHash,
         },
       });
@@ -340,6 +356,57 @@ export class ReceivingService {
       })),
       tamperProofHash: confirmation.proofOfReceiptHash,
       generatedAt: confirmation.createdAt,
+    };
+  }
+
+  /**
+   * Verifies proof of receipt by recomputing the canonical SHA-256 hash from database fields.
+   * Never trusts the stored hash without recomputation.
+   */
+  async verifyReceipt(deliveryId: string, orgId: string) {
+    const delivery = await prisma.expectedDelivery.findFirst({
+      where: { id: deliveryId, orgId },
+      include: {
+        carrier: true,
+        dock: true,
+        receivingConfirmations: {
+          include: { confirmedByUser: true, receivingSession: true },
+        },
+      },
+    });
+
+    if (!delivery || delivery.receivingConfirmations.length === 0) {
+      return { success: false, error: 'No receipt found for this delivery' };
+    }
+
+    const conf = delivery.receivingConfirmations[0];
+    const canonicalPayload = {
+      receiptNumber: conf.receiptNumber,
+      deliveryId: delivery.id,
+      purchaseOrderNumber: delivery.purchaseOrderNumber,
+      carrier: delivery.carrier?.name,
+      dockNumber: delivery.dock?.dockNumber,
+      expectedPallets: delivery.palletCount,
+      receivedPallets: conf.receivingSession.palletCountReceived,
+      sealIntact: conf.sealIntact,
+      damagesReported: conf.damagesReported,
+      discrepancyCount: conf.discrepancyCount,
+      verifiedByUserId: conf.confirmedByUserId,
+      confirmedAt: conf.confirmedAt.toISOString(),
+    };
+
+    const recomputedHash = generateTamperProofHash(canonicalPayload);
+    const isAuthentic = recomputedHash === conf.proofOfReceiptHash;
+
+    return {
+      success: true,
+      isAuthentic,
+      storedHash: conf.proofOfReceiptHash,
+      recomputedHash,
+      receiptNumber: conf.receiptNumber,
+      confirmedAt: conf.confirmedAt,
+      verifiedByUserName: conf.confirmedByUser.name,
+      evidencePayload: canonicalPayload,
     };
   }
 }

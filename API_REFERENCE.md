@@ -114,9 +114,45 @@ Completes receiving, runs Amazon Bedrock discrepancy analysis, and seals the rec
 ### `GET /api/receipts/{deliveryId}`
 Retrieves the tamper-evident proof-of-receipt certificate with the 256-bit SHA-256 cryptographic hash.
 
+### `POST /api/receipts/{deliveryId}/verify`
+Cryptographically verifies proof of receipt by recomputing the canonical SHA-256 hash from database fields.
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "data": {
+      "isAuthentic": true,
+      "receiptNumber": "REC-XXXXX-9901",
+      "storedHash": "a1b2c3...",
+      "recomputedHash": "a1b2c3...",
+      "verifiedAt": "2026-10-24T18:00:00Z",
+      "verifiedByUserName": "Dave Jenkins"
+    }
+  }
+  ```
+
 ---
 
-## 6. Simulation & Dev Testing
+## 6. Demo Studio & Hackathon Verification
+
+### `POST /api/demo/scenario`
+Executes one of six deterministic judge scenarios (A through F) with database updates and real-time SSE emissions.
+- **Body**:
+  ```json
+  {
+    "scenario": "A" // "A" | "B" | "C" | "D" | "E" | "F"
+  }
+  ```
+
+### `POST /api/demo/reset`
+Resets the warehouse facility to the deterministic baseline state.
+
+### `GET /api/demo/timeline`
+Fetches the synchronized operational activity timeline combining Ring events, correlations, status transitions, and receipts.
+
+---
+
+## 7. Simulation & Dev Testing
 
 ### `POST /api/simulator/trigger`
 Triggers simulated Ring Partner events for interactive testing.
