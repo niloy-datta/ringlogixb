@@ -115,6 +115,32 @@ async function main() {
     update: {},
   });
 
+  const dock4 = await prisma.dock.upsert({
+    where: { facilityId_dockNumber: { facilityId: facility.id, dockNumber: 'BAY-04' } },
+    create: {
+      id: 'dock_bay_04',
+      orgId,
+      facilityId: facility.id,
+      dockNumber: 'BAY-04',
+      name: 'Bay 4 - High-Value Secure Freight',
+      status: DockStatus.RESERVED,
+    },
+    update: {},
+  });
+
+  const dock5 = await prisma.dock.upsert({
+    where: { facilityId_dockNumber: { facilityId: facility.id, dockNumber: 'BAY-05' } },
+    create: {
+      id: 'dock_bay_05',
+      orgId,
+      facilityId: facility.id,
+      dockNumber: 'BAY-05',
+      name: 'Bay 5 - Bulk Inbound Staging',
+      status: DockStatus.IDLE,
+    },
+    update: {},
+  });
+
   // 5. Ring Cameras
   const cam1 = await prisma.ringCameraConnection.upsert({
     where: { orgId_deviceId: { orgId, deviceId: 'ava1.ring.device.dock1' } },
@@ -164,6 +190,38 @@ async function main() {
     update: {},
   });
 
+  const cam4 = await prisma.ringCameraConnection.upsert({
+    where: { orgId_deviceId: { orgId, deviceId: 'ava1.ring.device.dock4' } },
+    create: {
+      id: 'cam_dock_04',
+      orgId,
+      facilityId: facility.id,
+      deviceId: 'ava1.ring.device.dock4',
+      deviceName: 'Ring Outdoor Cam Pro - Bay 4 Secure',
+      deviceType: 'outdoor_cam',
+      batteryStatus: 'Hardwired AC',
+      isOnline: true,
+      lastSeenAt: new Date(),
+    },
+    update: {},
+  });
+
+  const cam5 = await prisma.ringCameraConnection.upsert({
+    where: { orgId_deviceId: { orgId, deviceId: 'ava1.ring.device.dock5' } },
+    create: {
+      id: 'cam_dock_05',
+      orgId,
+      facilityId: facility.id,
+      deviceId: 'ava1.ring.device.dock5',
+      deviceName: 'Ring Pan-Tilt Cam - Bay 5 Overview',
+      deviceType: 'pan_tilt_cam',
+      batteryStatus: 'Hardwired AC',
+      isOnline: true,
+      lastSeenAt: new Date(),
+    },
+    update: {},
+  });
+
   // 6. Camera-to-Dock Mappings
   await prisma.cameraDockMapping.upsert({
     where: { cameraId_dockId: { cameraId: cam1.id, dockId: dock1.id } },
@@ -197,6 +255,30 @@ async function main() {
       dockId: dock3.id,
       isPrimary: true,
       viewAngle: 'RAMP_SAFETY_VIEW',
+    },
+    update: {},
+  });
+
+  await prisma.cameraDockMapping.upsert({
+    where: { cameraId_dockId: { cameraId: cam4.id, dockId: dock4.id } },
+    create: {
+      orgId,
+      cameraId: cam4.id,
+      dockId: dock4.id,
+      isPrimary: true,
+      viewAngle: 'PERIMETER_SURVEILLANCE',
+    },
+    update: {},
+  });
+
+  await prisma.cameraDockMapping.upsert({
+    where: { cameraId_dockId: { cameraId: cam5.id, dockId: dock5.id } },
+    create: {
+      orgId,
+      cameraId: cam5.id,
+      dockId: dock5.id,
+      isPrimary: true,
+      viewAngle: 'BAY_APRON_WIDE',
     },
     update: {},
   });
@@ -363,6 +445,41 @@ async function main() {
     },
   });
 
+  // Delivery 4: Reserved for Bay 4 (High-Value Secured)
+  await prisma.expectedDelivery.create({
+    data: {
+      orgId,
+      facilityId: facility.id,
+      dockId: dock4.id,
+      carrierId: fedex.id,
+      purchaseOrderNumber: 'PO-2026-8804',
+      bolNumber: 'BOL-FX-77042',
+      expectedArrivalWindowStart: todayNoon,
+      expectedArrivalWindowEnd: todayAfternoon,
+      palletCount: 6,
+      itemDescription: 'High-Value Aerospace Avionics Components',
+      status: ReceivingStatus.SCHEDULED,
+    },
+  });
+
+  // Delivery 5: Bulk Inbound Staging at Bay 5
+  await prisma.expectedDelivery.create({
+    data: {
+      orgId,
+      facilityId: facility.id,
+      dockId: dock5.id,
+      carrierId: odfl.id,
+      purchaseOrderNumber: 'PO-2026-8805',
+      bolNumber: 'BOL-OD-88190',
+      expectedArrivalWindowStart: todayMorning,
+      expectedArrivalWindowEnd: todayNoon,
+      actualArrivalTime: new Date(Date.now() - 10 * 60 * 1000), // arrived 10 mins ago
+      palletCount: 18,
+      itemDescription: 'Industrial Hardware & Raw Fasteners',
+      status: ReceivingStatus.ARRIVED,
+    },
+  });
+
   // 9. Operational Exception
   await prisma.operationalException.create({
     data: {
@@ -381,9 +498,9 @@ async function main() {
   console.log('✅ Seed completed successfully!');
   console.log(`- Org: ${org.name}`);
   console.log(`- Facility: ${facility.name}`);
-  console.log(`- Docks: BAY-01, BAY-02, BAY-03`);
-  console.log(`- Ring Cameras: 3 Cameras registered & mapped`);
-  console.log(`- Expected Deliveries: 3 Shipments seeded with full event correlation`);
+  console.log(`- Docks: BAY-01, BAY-02, BAY-03, BAY-04, BAY-05 (5 Loading Bays)`);
+  console.log(`- Ring Cameras: 5 Cameras registered & mapped`);
+  console.log(`- Expected Deliveries: 5 Shipments seeded with full event correlation`);
 }
 
 main()

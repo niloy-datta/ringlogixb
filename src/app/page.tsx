@@ -17,7 +17,12 @@ import {
   FileText,
   Boxes,
   Lock,
+  Award,
+  Sparkles,
+  Layers,
 } from 'lucide-react';
+import { WarehouseDigitalTwin } from '@/components/digital-twin/warehouse-twin';
+import { JudgeTourController } from '@/components/digital-twin/judge-tour-controller';
 
 export default function DashboardPage() {
   const queryClient = useQueryClient();
@@ -31,6 +36,8 @@ export default function DashboardPage() {
   const [activeReceipt, setActiveReceipt] = useState<any>(null);
   const [simulating, setSimulating] = useState(false);
   const [simulationMessage, setSimulationMessage] = useState<string | null>(null);
+  const [isJudgeTourOpen, setIsJudgeTourOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'twin' | 'grid'>('twin');
 
   // Receiving form state
   const [palletsReceived, setPalletsReceived] = useState<number>(10);
@@ -242,6 +249,67 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      {/* Amazon Ring Judging Demonstration Banner */}
+      <div className="relative rounded-2xl p-4 sm:p-5 bg-gradient-to-r from-sky-950/80 via-slate-900 to-indigo-950/70 border border-sky-500/40 shadow-xl overflow-hidden flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center space-x-3.5">
+          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-slate-950 shadow-lg shadow-amber-500/30 shrink-0">
+            <Award className="w-6 h-6" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono font-bold uppercase tracking-wider text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded border border-amber-500/30">
+                Amazon Ring Developer Judging Mode
+              </span>
+              <span className="text-[10px] font-mono text-sky-400 hidden sm:inline">
+                &bull; 90-Second End-to-End Walkthrough
+              </span>
+            </div>
+            <h1 className="text-lg font-bold text-white tracking-tight mt-1">
+              Arrival-to-Receipt Automation & Warehouse Digital Twin
+            </h1>
+            <p className="text-xs text-slate-300">
+              Interactive 2.5D visualizer connected to genuine Amazon Ring API motion events, deterministic correlation, and SHA-256 sealed proof of receipts.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5 shrink-0">
+          {/* View Toggle */}
+          <div className="bg-slate-900/90 p-1 rounded-xl border border-slate-800 flex items-center text-xs">
+            <button
+              onClick={() => setViewMode('twin')}
+              className={`px-3 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 ${
+                viewMode === 'twin'
+                  ? 'bg-sky-600 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              Digital Twin
+            </button>
+            <button
+              onClick={() => setViewMode('grid')}
+              className={`px-3 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 ${
+                viewMode === 'grid'
+                  ? 'bg-sky-600 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Boxes className="w-3.5 h-3.5" />
+              Classic Grid
+            </button>
+          </div>
+
+          <button
+            onClick={() => setIsJudgeTourOpen(true)}
+            className="px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 transition flex items-center gap-2 shadow-lg shadow-amber-500/25"
+          >
+            <Sparkles className="w-4 h-4 fill-slate-950" />
+            Launch 90s Judge Tour
+          </button>
+        </div>
+      </div>
+
       {/* Top Banner: Simulator & Quick Test Fixtures */}
       <section className="glass-panel-glow rounded-xl p-4 border border-sky-500/30">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -367,6 +435,24 @@ export default function DashboardPage() {
           </div>
         </div>
       </section>
+
+      {/* 2.5D Warehouse Digital Twin Operational Center */}
+      {viewMode === 'twin' && (
+        <section className="animate-in fade-in duration-300">
+          <WarehouseDigitalTwin
+            docks={docksData || []}
+            activeEvent={liveEvents[0]}
+            onSelectDock={(dock) => {
+              const delivery = dock.expectedDeliveries?.[0];
+              if (delivery) setReviewDelivery(delivery);
+            }}
+            onSimulateArrival={(deviceId) => {
+              triggerSimulation('SCHEDULED_TRUCK');
+            }}
+            onReviewDelivery={(delivery) => setReviewDelivery(delivery)}
+          />
+        </section>
+      )}
 
       {/* Main Content Split: Live Feed & Operational Center */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -940,6 +1026,16 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* 90-Second Amazon Ring Judge Demonstration Tour Modal */}
+      <JudgeTourController
+        isOpen={isJudgeTourOpen}
+        onClose={() => setIsJudgeTourOpen(false)}
+        onTriggerScenario={triggerSimulation}
+        onRefreshData={() => {
+          queryClient.invalidateQueries();
+        }}
+      />
     </div>
   );
 }

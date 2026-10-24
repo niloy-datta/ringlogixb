@@ -29,7 +29,7 @@
 
 body {
   color: hsl(var(--foreground));
-  background: radial-gradient(circle at 50% 0%, #0f172a 0%, #020617 100%);
+  background: radial-gradient(circle at 50% 0%, #0c1427 0%, #030712 100%);
   min-height: 100vh;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -44,10 +44,10 @@ body {
 }
 
 .glass-panel-glow {
-  background: rgba(15, 23, 42, 0.85);
+  background: rgba(15, 23, 42, 0.88);
   backdrop-filter: blur(16px);
-  border: 1px solid rgba(2, 132, 199, 0.25);
-  box-shadow: 0 0 25px -5px rgba(2, 132, 199, 0.15);
+  border: 1px solid rgba(2, 132, 199, 0.35);
+  box-shadow: 0 0 35px -5px rgba(2, 132, 199, 0.22);
 }
 
 /* Pulse animation for active cameras */
@@ -58,7 +58,7 @@ body {
   }
   70% {
     transform: scale(1);
-    box-shadow: 0 0 0 8px rgba(2, 132, 199, 0);
+    box-shadow: 0 0 0 10px rgba(2, 132, 199, 0);
   }
   100% {
     transform: scale(0.95);
@@ -68,6 +68,63 @@ body {
 
 .camera-beacon {
   animation: pulse-ring 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+/* Warehouse Digital Twin Industrial Styles */
+@keyframes beam-pulse {
+  0% { stroke-dashoffset: 40; opacity: 0.4; }
+  50% { opacity: 1; filter: drop-shadow(0 0 8px #38bdf8); }
+  100% { stroke-dashoffset: 0; opacity: 0.4; }
+}
+
+@keyframes cone-pulse {
+  0% { opacity: 0.18; }
+  50% { opacity: 0.45; }
+  100% { opacity: 0.18; }
+}
+
+@keyframes motion-wave {
+  0% { transform: scale(0.85); opacity: 0.8; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+@keyframes dock-hazard {
+  0% { background-position: 0 0; }
+  100% { background-position: 32px 0; }
+}
+
+.radar-cone {
+  animation: cone-pulse 3.5s infinite ease-in-out;
+}
+
+.beam-line {
+  stroke-dasharray: 6 4;
+  animation: beam-pulse 1.6s linear infinite;
+}
+
+.motion-radar-pulse {
+  animation: motion-wave 1.8s infinite cubic-bezier(0.1, 0.8, 0.2, 1);
+}
+
+.hazard-stripe {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(245, 158, 11, 0.25),
+    rgba(245, 158, 11, 0.25) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+}
+
+.hazard-stripe-active {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(245, 158, 11, 0.5),
+    rgba(245, 158, 11, 0.5) 8px,
+    rgba(15, 23, 42, 0.6) 8px,
+    rgba(15, 23, 42, 0.6) 16px
+  );
+  animation: dock-hazard 2s linear infinite;
 }
 
 /* Custom modern scrollbars */
