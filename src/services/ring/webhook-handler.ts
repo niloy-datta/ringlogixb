@@ -34,7 +34,7 @@ export class RingWebhookHandler {
   ): Promise<WebhookProcessingResult> {
     const startTime = Date.now();
 
-    // 1. Validate signature against raw request bytes
+    // 1. Validate signature against raw request bytes using constant-time comparison
     const isValidSignature = verifyRingWebhookSignature(rawBody, signatureHeader, this.secret);
     if (!isValidSignature) {
       logger.warn('Rejected Ring webhook: Invalid HMAC signature', { orgId });
@@ -63,18 +63,62 @@ export class RingWebhookHandler {
       };
     }
 
-    const requestId = payload.meta?.request_id;
+    // 3. Resolve Request ID / Deduplication ID (JSON:API data.id or meta.request_id)
+    const anyPayload = payload as any;
+    const requestId =
+      anyPayload.meta?.request_id ||
+      anyPayload.data?.id ||
+      anyPayload.data?.event_id ||
+      anyPayload.request_id;
+
     if (!requestId) {
       return {
         statusCode: 400,
         body: {
           status: 'error',
-          message: 'Missing meta.request_id',
+          message: 'Missing meta.request_id or data.id for event idempotency',
         },
       };
     }
 
-    // 3. Deduplication check via meta.request_id
+    // 4. Replay attack protection (verify timestamp tolerance window: 5 minutes)
+    const rawTimestamp =
+      anyPayload.data?.attributes?.timestamp ||
+      anyPayload.meta?.timestamp ||
+      anyPayload.data?.started_at;
+
+    if (rawTimestamp) {
+      const eventEpoch = typeof rawTimestamp === 'number' ? rawTimestamp : new Date(rawTimestamp).getTime();
+      if (!isNaN(eventEpoch)) {
+        const now = Date.now();
+        const maxAgeMs = 5 * 60 * 1000; // 5 minutes
+        const maxClockSkewMs = 60 * 1000; // 1 minute in the future
+
+        if (now - eventEpoch > maxAgeMs) {
+          logger.warn('Rejected Ring webhook: Replay attack or stale event detected', { requestId, eventEpoch });
+          return {
+            statusCode: 400,
+            body: {
+              status: 'error',
+              message: 'Webhook timestamp expired: event is older than 300 seconds',
+            },
+          };
+        }
+
+        if (eventEpoch - now > maxClockSkewMs) {
+          logger.warn('Rejected Ring webhook: Future timestamp clock skew detected', { requestId, eventEpoch });
+          return {
+            statusCode: 400,
+            body: {
+              status: 'error',
+              message: 'Webhook timestamp invalid: clock skew in the future exceeds 60 seconds',
+            },
+          };
+        }
+      }
+    }
+
+    // 5. Deduplication check via requestId
     const existingEvent = await prisma.ringEvent.findUnique({
       where: { requestId },
     });
@@ -90,14 +134,34 @@ export class RingWebhookHandler {
       };
     }
 
-    // 4. Normalize the event
-    const normalized = normalizeRingWebhookEvent(payload, 'RING_PARTNER_WEBHOOK', true);
+    // 6. Account-to-Organization mapping based on trusted identities
+    let effectiveOrgId = orgId;
+    const accountId = anyPayload.meta?.account_id;
+    if (accountId && accountId !== 'ring_playground_simulated_account') {
+      const mappedOrg = await prisma.organization.findFirst({
+        where: {
+          OR: [
+            { id: accountId },
+            { code: accountId },
+            { slug: accountId },
+          ],
+        },
+      });
+      if (mappedOrg) {
+        effectiveOrgId = mappedOrg.id;
+      }
+    }
 
-    // 5. Ensure camera connection exists or resolve facility
+    // 7. Normalize the event (handles JSON:API or legacy format)
+    const isSimulation = Boolean(anyPayload.meta?.simulation || anyPayload.meta?.account_id?.includes('simulat'));
+    const provenance = isSimulation ? 'RING_SIMULATOR' : 'RING_PARTNER_WEBHOOK';
+    const normalized = normalizeRingWebhookEvent(payload, provenance, true);
+
+    // 8. Ensure camera connection exists or resolve facility
     let camera = await prisma.ringCameraConnection.findUnique({
       where: {
         orgId_deviceId: {
-          orgId,
+          orgId: effectiveOrgId,
           deviceId: normalized.deviceId,
         },
       },
@@ -106,13 +170,13 @@ export class RingWebhookHandler {
     // Auto-register discovered camera in default facility if not yet mapped
     if (!camera) {
       const defaultFacility = await prisma.facility.findFirst({
-        where: { orgId },
+        where: { orgId: effectiveOrgId },
       });
 
       if (defaultFacility) {
         camera = await prisma.ringCameraConnection.create({
           data: {
-            orgId,
+            orgId: effectiveOrgId,
             facilityId: defaultFacility.id,
             deviceId: normalized.deviceId,
             deviceName: `Camera ${normalized.deviceId.slice(-6)}`,
@@ -123,12 +187,15 @@ export class RingWebhookHandler {
       }
     }
 
-    const facilityId = camera?.facilityId || (await prisma.facility.findFirst({ where: { orgId } }))?.id || 'fac_default';
+    const facilityId =
+      camera?.facilityId ||
+      (await prisma.facility.findFirst({ where: { orgId: effectiveOrgId } }))?.id ||
+      'fac_default';
 
-    // 6. Persist event durably
+    // 9. Persist event durably
     const persistedEvent = await prisma.ringEvent.create({
       data: {
-        orgId,
+        orgId: effectiveOrgId,
         facilityId,
         cameraId: camera?.id || 'cam_unmapped',
         requestId: normalized.requestId,
@@ -142,9 +209,17 @@ export class RingWebhookHandler {
       },
     });
 
-    // 7. Handle device status change events directly
-    if (payload.event_type === 'device_status_changed' && camera) {
-      const isOnline = payload.data?.online !== false;
+    // 10. Handle device status change events (online / offline)
+    if (normalized.eventType === 'device_status_changed' && camera) {
+      let isOnline = true;
+      if (anyPayload.data?.attributes?.event_type === 'device_offline') {
+        isOnline = false;
+      } else if (anyPayload.data?.attributes?.event_type === 'device_online') {
+        isOnline = true;
+      } else if (anyPayload.data?.online !== undefined) {
+        isOnline = Boolean(anyPayload.data.online);
+      }
+
       await prisma.ringCameraConnection.update({
         where: { id: camera.id },
         data: {
@@ -157,7 +232,7 @@ export class RingWebhookHandler {
         // Trigger automated CAMERA_OFFLINE exception
         await prisma.operationalException.create({
           data: {
-            orgId,
+            orgId: effectiveOrgId,
             facilityId,
             exceptionType: ExceptionType.CAMERA_OFFLINE,
             severity: ExceptionSeverity.HIGH,
@@ -168,8 +243,8 @@ export class RingWebhookHandler {
       }
     }
 
-    // 8. Enqueue background correlation job for asynchronous processing
-    await jobQueue.enqueue(orgId, 'CORRELATE_EVENT', {
+    // 11. Enqueue background correlation job for asynchronous processing
+    await jobQueue.enqueue(effectiveOrgId, 'CORRELATE_EVENT', {
       ringEventId: persistedEvent.id,
       cameraId: camera?.id,
       deviceId: normalized.deviceId,
@@ -178,11 +253,11 @@ export class RingWebhookHandler {
       startedAt: normalized.startedAt.toISOString(),
     });
 
-    // 9. Broadcast live event to connected web clients
+    // 12. Broadcast live event to connected web clients
     realtimeBroker.broadcast({
       id: `evt_ring_${persistedEvent.id}`,
       type: 'RING_EVENT_RECEIVED',
-      orgId,
+      orgId: effectiveOrgId,
       data: {
         eventId: persistedEvent.id,
         deviceId: normalized.deviceId,
@@ -199,7 +274,7 @@ export class RingWebhookHandler {
       subType: normalized.subType,
     });
 
-    // Return 200 OK within 5-second window
+    // 13. Return 200 OK within official Ring 5-second SLA
     return {
       statusCode: 200,
       body: {

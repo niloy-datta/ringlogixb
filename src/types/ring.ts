@@ -1,6 +1,7 @@
 /**
  * Ring Partner API & Webhook Specifications
  * Based on official Amazon Vision API: https://api.amazonvision.com
+ * Conforms to Ring JSON:API standard: https://developer.amazon.com/docs/ring/api-documentation.html
  */
 
 export type RingClassification = 'human' | 'vehicle' | 'package_delivery' | 'other_motion' | 'motion';
@@ -37,14 +38,46 @@ export interface RingDeviceCapabilities {
 }
 
 export interface RingWebhookMeta {
-  request_id: string; // Unique GUID for deduplication
-  timestamp: string;  // ISO UTC timestamp
+  request_id?: string; // Unique GUID for deduplication
+  timestamp?: string;  // ISO UTC timestamp
   account_id?: string;
 }
 
-export interface RingWebhookPayload {
+/**
+ * Official Ring JSON:API Webhook Specification
+ */
+export interface RingJsonApiEventPayload {
+  data: {
+    type: 'events';
+    id: string; // e.g. "evt_123456789abcdef"
+    attributes: {
+      event_type: 'motion_detected' | 'device_online' | 'device_offline' | string;
+      sub_type?: RingClassification | string;
+      source: string; // e.g. "ava1.ring.device.XXXYYYZZZ"
+      source_type?: 'devices' | string;
+      timestamp: number; // epoch ms
+      timestamp_readable?: string;
+      component_ids?: string[];
+      occurred_at?: string;
+      snapshot_url?: string;
+    };
+    relationships?: {
+      device?: { data: { type: 'devices'; id: string } };
+      location?: { data: { type: 'locations'; id: string } };
+    };
+  };
+  meta?: {
+    account_id?: string;
+    request_id?: string;
+  };
+}
+
+/**
+ * Flexible payload supporting both official JSON:API and adapter envelopes
+ */
+export interface RingLegacyWebhookPayload {
   meta: RingWebhookMeta;
-  event_type: 'motion' | 'device_status_changed' | 'doorbell_press' | 'live_view';
+  event_type: 'motion' | 'device_status_changed' | 'doorbell_press' | 'live_view' | string;
   device_id: string;
   data: {
     event_id?: string;
@@ -64,15 +97,18 @@ export interface RingWebhookPayload {
   };
 }
 
+export type RingWebhookPayload = RingJsonApiEventPayload | RingLegacyWebhookPayload;
+
 export interface NormalizedRingEvent {
   requestId: string;
   deviceId: string;
-  eventType: string;
+  eventType: string; // "motion" | "device_status_changed" | "device_offline" | "device_online"
   subType: RingClassification;
   hasSmartAlertClassification: boolean;
   startedAt: Date;
   endedAt?: Date;
   snapshotUrl?: string;
+  accountId?: string;
   rawPayload: Record<string, unknown>;
   provenance: {
     source: 'RING_PARTNER_WEBHOOK' | 'RING_SIMULATOR' | 'LOCAL_SYNTHETIC_FIXTURE';

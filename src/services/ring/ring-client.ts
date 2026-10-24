@@ -1,33 +1,115 @@
 /**
  * Official Ring Partner API Client
  * Base Endpoint: https://api.amazonvision.com
+ * Conforms to Amazon Vision / Ring Partner API OAuth2 and REST endpoints:
+ * https://developer.amazon.com/docs/ring/api-documentation.html
  */
 
 import { RingDevice, RingDeviceStatus, RingDeviceCapabilities } from '@/types/ring';
 import { logger } from '@/lib/logger';
+import { encryptSecret, decryptSecret } from '@/lib/crypto';
 
 export interface RingClientConfig {
   baseUrl?: string;
+  tokenEndpoint?: string;
+  clientId?: string;
+  clientSecret?: string;
   accessToken?: string;
+  refreshToken?: string;
   timeoutMs?: number;
+}
+
+export interface RingTokenResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  refresh_token?: string;
+  scope?: string;
 }
 
 export class RingPartnerApiClient {
   private baseUrl: string;
+  private tokenEndpoint: string;
+  private clientId?: string;
+  private clientSecret?: string;
   private accessToken?: string;
+  private refreshToken?: string;
+  private tokenExpiresAt?: number;
   private timeoutMs: number;
 
   constructor(config?: RingClientConfig) {
     this.baseUrl = config?.baseUrl || process.env.RING_API_BASE_URL || 'https://api.amazonvision.com';
+    this.tokenEndpoint =
+      config?.tokenEndpoint ||
+      process.env.RING_OAUTH_TOKEN_URL ||
+      'https://api.amazonvision.com/oauth/token';
+    this.clientId = config?.clientId || process.env.RING_CLIENT_ID;
+    this.clientSecret = config?.clientSecret || process.env.RING_CLIENT_SECRET;
     this.accessToken = config?.accessToken || process.env.RING_ACCESS_TOKEN;
+    this.refreshToken = config?.refreshToken || process.env.RING_REFRESH_TOKEN;
     this.timeoutMs = config?.timeoutMs || 8000;
   }
 
-  private getHeaders(customToken?: string): HeadersInit {
-    const token = customToken || this.accessToken;
-    if (!token) {
-      throw new Error('Ring API Error: Missing access token. Provide a Developer Playground token or OAuth token.');
+  /**
+   * Exchanges Client Credentials or Refresh Token for an OAuth 2.0 Access Token.
+   * Caches token in memory until expiration.
+   */
+  async getValidToken(): Promise<string> {
+    const now = Date.now();
+    // Use cached token if valid for at least 60 more seconds
+    if (this.accessToken && this.tokenExpiresAt && this.tokenExpiresAt - now > 60000) {
+      return this.accessToken;
     }
+
+    if (this.clientId && this.clientSecret) {
+      try {
+        const bodyParams = new URLSearchParams();
+        if (this.refreshToken) {
+          bodyParams.set('grant_type', 'refresh_token');
+          bodyParams.set('refresh_token', this.refreshToken);
+        } else {
+          bodyParams.set('grant_type', 'client_credentials');
+          bodyParams.set('scope', 'ring.partner.devices ring.partner.events');
+        }
+
+        const basicAuth = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+        const res = await fetch(this.tokenEndpoint, {
+          method: 'POST',
+          headers: {
+            Authorization: `Basic ${basicAuth}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Accept: 'application/json',
+          },
+          body: bodyParams.toString(),
+          signal: AbortSignal.timeout(this.timeoutMs),
+        });
+
+        if (res.ok) {
+          const data = (await res.json()) as RingTokenResponse;
+          this.accessToken = data.access_token;
+          this.tokenExpiresAt = Date.now() + (data.expires_in || 3600) * 1000;
+          if (data.refresh_token) {
+            this.refreshToken = data.refresh_token;
+          }
+          return this.accessToken;
+        }
+      } catch (tokenErr) {
+        logger.warn('Failed OAuth client credentials token exchange; falling back to static token', {
+          error: String(tokenErr),
+        });
+      }
+    }
+
+    // Static fallback token (e.g. playground token)
+    if (this.accessToken) {
+      return this.accessToken;
+    }
+
+    throw new Error('Ring API Error: Missing access token and credentials to obtain OAuth token.');
+  }
+
+  private async getHeaders(customToken?: string): Promise<HeadersInit> {
+    const token = customToken || (await this.getValidToken());
     return {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
@@ -45,9 +127,10 @@ export class RingPartnerApiClient {
     logger.debug('Calling Ring API listDevices', { url });
 
     try {
+      const headers = await this.getHeaders(customToken);
       const response = await fetch(url, {
         method: 'GET',
-        headers: this.getHeaders(customToken),
+        headers,
         signal: AbortSignal.timeout(this.timeoutMs),
       });
 
@@ -72,9 +155,10 @@ export class RingPartnerApiClient {
     const url = `${this.baseUrl}/v1/devices/${encodeURIComponent(deviceId)}/status`;
 
     try {
+      const headers = await this.getHeaders(customToken);
       const response = await fetch(url, {
         method: 'GET',
-        headers: this.getHeaders(customToken),
+        headers,
         signal: AbortSignal.timeout(this.timeoutMs),
       });
 
@@ -102,9 +186,10 @@ export class RingPartnerApiClient {
     const url = `${this.baseUrl}/v1/devices/${encodeURIComponent(deviceId)}/capabilities`;
 
     try {
+      const headers = await this.getHeaders(customToken);
       const response = await fetch(url, {
         method: 'GET',
-        headers: this.getHeaders(customToken),
+        headers,
         signal: AbortSignal.timeout(this.timeoutMs),
       });
 
@@ -137,9 +222,10 @@ export class RingPartnerApiClient {
     const url = `${this.baseUrl}/v1/history/devices/${encodeURIComponent(deviceId)}/events?${query.toString()}`;
 
     try {
+      const headers = await this.getHeaders(customToken);
       const response = await fetch(url, {
         method: 'GET',
-        headers: this.getHeaders(customToken),
+        headers,
         signal: AbortSignal.timeout(this.timeoutMs),
       });
 
@@ -154,6 +240,20 @@ export class RingPartnerApiClient {
       logger.error('Failed to get Ring event history', err, { deviceId });
       throw err;
     }
+  }
+
+  /**
+   * Helper to securely encrypt stored Ring credentials before writing to DB.
+   */
+  encryptToken(token: string): string {
+    return encryptSecret(token);
+  }
+
+  /**
+   * Helper to securely decrypt stored Ring credentials from DB.
+   */
+  decryptToken(encryptedToken: string): string {
+    return decryptSecret(encryptedToken);
   }
 }
 
