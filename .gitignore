@@ -19,8 +19,9 @@ pnpm-debug.log*
 .env*.local
 .env
 
-# Vitest coverage
+# Vitest & build cache
 coverage/
+*.tsbuildinfo
 
 # OS files
 .DS_Store
